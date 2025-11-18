@@ -1,5 +1,6 @@
 import streamlit as st
 from pathlib import Path
+import os
 
 # --- Módulos internos ---
 from ui.style import aplicar_estilos
@@ -35,7 +36,7 @@ if not USERS_PATH.exists():
     st.error(f"❌ No se encontró el archivo de usuarios en: {USERS_PATH}")
     st.stop()
 
-if not CREDS_PATH.exists():
+if not CREDS_PATH.exists() and "GOOGLE_CREDS" not in os.environ:
     st.error(f"❌ No se encontró el archivo de credenciales en: {CREDS_PATH}")
     st.stop()
 
