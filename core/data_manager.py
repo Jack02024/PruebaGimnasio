@@ -18,21 +18,26 @@ QUEUE_PATH = BASE_DIR / "offline_queue.json"
 
 # --- Cliente gspread ---
 def get_gspread_client():
-    try:
-        creds_env = os.environ.get("GOOGLE_CREDS")
-        if creds_env:
+    creds_env = os.environ.get("GOOGLE_CREDS")
+
+    if creds_env:
+        try:
             info = json.loads(creds_env)
             credentials = Credentials.from_service_account_info(info, scopes=SCOPES)
-        else:
-            if not CREDS_PATH.exists():
-                raise FileNotFoundError(f"No se encontró el archivo {CREDS_PATH}")
-            credentials = Credentials.from_service_account_file(str(CREDS_PATH), scopes=SCOPES)
-        return gspread.authorize(credentials)
-    except Exception as e:
-        import streamlit as st
+            return gspread.authorize(credentials)
+        except Exception as e:
+            raise RuntimeError(f"Error al procesar GOOGLE_CREDS: {e}")
 
-        st.error(f"Error al cargar credenciales de Google: {e}")
-        st.stop()
+    if CREDS_PATH.exists():
+        try:
+            credentials = Credentials.from_service_account_file(str(CREDS_PATH), scopes=SCOPES)
+            return gspread.authorize(credentials)
+        except Exception as e:
+            raise RuntimeError(f"Error al cargar credenciales.json: {e}")
+
+    raise FileNotFoundError(
+        "No se encontró GOOGLE_CREDS (entorno) ni credenciales.json (local)."
+    )
 
 
 # --- Conexión global ---
