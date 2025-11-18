@@ -1,0 +1,6 @@
+credentials.json
+credenciales.json
+firmas/
+socios.xlsx
+__pycache__/
+.DS_Store
