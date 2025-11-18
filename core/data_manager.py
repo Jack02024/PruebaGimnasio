@@ -5,7 +5,6 @@ import pandas as pd
 from pathlib import Path
 import json
 import os
-from tempfile import NamedTemporaryFile
 
 # --- Configuración ---
 SCOPES = [
@@ -17,27 +16,28 @@ CREDS_PATH = BASE_DIR / "credenciales.json"
 SHEET_NAME = "socios_gimnasio"
 QUEUE_PATH = BASE_DIR / "offline_queue.json"
 
-# --- Carga de credenciales ---
-CREDS_SOURCE = None
-CREDS_ENV = os.environ.get("GOOGLE_CREDS")
-if CREDS_ENV:
-    temp_file = NamedTemporaryFile(delete=False, suffix=".json")
-    temp_file.write(CREDS_ENV.encode("utf-8"))
-    temp_file.flush()
-    temp_file.close()
-    CREDS_SOURCE = temp_file.name
-elif CREDS_PATH.exists():
-    CREDS_SOURCE = str(CREDS_PATH)
-else:
-    import streamlit as st
+# --- Cliente gspread ---
+def get_gspread_client():
+    try:
+        creds_env = os.environ.get("GOOGLE_CREDS")
+        if creds_env:
+            info = json.loads(creds_env)
+            credentials = Credentials.from_service_account_info(info, scopes=SCOPES)
+        else:
+            if not CREDS_PATH.exists():
+                raise FileNotFoundError(f"No se encontró el archivo {CREDS_PATH}")
+            credentials = Credentials.from_service_account_file(str(CREDS_PATH), scopes=SCOPES)
+        return gspread.authorize(credentials)
+    except Exception as e:
+        import streamlit as st
 
-    st.error("No se encontraron credenciales. Define GOOGLE_CREDS o credenciales.json")
-    st.stop()
+        st.error(f"Error al cargar credenciales de Google: {e}")
+        st.stop()
+
 
 # --- Conexión global ---
 try:
-    _credentials = Credentials.from_service_account_file(CREDS_SOURCE, scopes=SCOPES)
-    _client = gspread.authorize(_credentials)
+    _client = get_gspread_client()
     _sheet = _client.open(SHEET_NAME).sheet1
     try:
         _logs_sheet = _client.open(SHEET_NAME).worksheet("Logs")
