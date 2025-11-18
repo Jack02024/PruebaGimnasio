@@ -4,6 +4,8 @@ from google.oauth2.service_account import Credentials
 import pandas as pd
 from pathlib import Path
 import json
+import os
+from tempfile import NamedTemporaryFile
 
 # --- Configuración ---
 SCOPES = [
@@ -15,15 +17,26 @@ CREDS_PATH = BASE_DIR / "credenciales.json"
 SHEET_NAME = "socios_gimnasio"
 QUEUE_PATH = BASE_DIR / "offline_queue.json"
 
-# --- Verificación del archivo de credenciales ---
-if not CREDS_PATH.exists():
+# --- Carga de credenciales ---
+CREDS_SOURCE = None
+CREDS_ENV = os.environ.get("GOOGLE_CREDS")
+if CREDS_ENV:
+    temp_file = NamedTemporaryFile(delete=False, suffix=".json")
+    temp_file.write(CREDS_ENV.encode("utf-8"))
+    temp_file.flush()
+    temp_file.close()
+    CREDS_SOURCE = temp_file.name
+elif CREDS_PATH.exists():
+    CREDS_SOURCE = str(CREDS_PATH)
+else:
     import streamlit as st
-    st.error(f"No se encontró el archivo de credenciales en: {CREDS_PATH}")
+
+    st.error("No se encontraron credenciales. Define GOOGLE_CREDS o credenciales.json")
     st.stop()
 
 # --- Conexión global ---
 try:
-    _credentials = Credentials.from_service_account_file(str(CREDS_PATH), scopes=SCOPES)
+    _credentials = Credentials.from_service_account_file(CREDS_SOURCE, scopes=SCOPES)
     _client = gspread.authorize(_credentials)
     _sheet = _client.open(SHEET_NAME).sheet1
     try:

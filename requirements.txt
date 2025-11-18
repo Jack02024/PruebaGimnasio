@@ -1,0 +1,14 @@
+streamlit>=1.28
+pandas>=2.0
+matplotlib>=3.8
+gspread>=5.7
+google-auth>=2.23
+google-auth-oauthlib>=1.0
+google-api-python-client>=2.100
+oauth2client>=4.1
+PyPDF2>=3.0
+reportlab>=4.0
+streamlit-drawable-canvas>=0.9
+Pillow>=10.0
+bcrypt>=4.0
+openpyxl>=3.1
