@@ -61,16 +61,26 @@ COLUMNS = [
     "DNI",
     "Teléfono",
     "Email",
-    "Tipo de plan",
     "Disciplina",
     "Plan contratado",
     "Precio",
     "Fecha nacimiento",
     "Fecha de alta",
+    "Banco",
+    "Titular",
+    "IBAN",
+    "Localidad",
     "Estado",
     "Estado de pago",
     "Fecha último pago",
 ]
+
+COLUMN_SYNONYMS = {
+    "plan": "Plan contratado",
+    "plan contratado": "Plan contratado",
+    "plancontratado": "Plan contratado",
+    "plan_contratado": "Plan contratado",
+}
 
 PLAN_PERIODOS_MESES = {
     "Mensual": 1,
@@ -119,8 +129,47 @@ def _empty_dataframe() -> pd.DataFrame:
     return pd.DataFrame(columns=COLUMNS)
 
 
+def _canonical_column_name(nombre: str) -> str:
+    """
+    Limpia el nombre de columna y devuelve la forma canónica esperada.
+    Actualmente se enfoca en asegurar el uso único de «Plan contratado».
+    """
+    if not nombre:
+        return nombre
+    limpio = " ".join(nombre.strip().replace("_", " ").split())
+    clave = limpio.lower()
+    return COLUMN_SYNONYMS.get(clave, limpio)
+
+
+def _normalize_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Renombra columnas con alias conocidos al esquema oficial y consolida duplicadas.
+    Evita que coexistan columnas como «Plan» y «Plan contratado».
+    """
+    if df is None:
+        return df
+
+    df = df.copy()
+    columnas_originales = list(df.columns)
+    for col in columnas_originales:
+        canonica = _canonical_column_name(col)
+        if canonica == col:
+            continue
+        if canonica in df.columns:
+            destino = df[canonica]
+            mask = destino.isna() | (destino.astype(str).str.strip() == "")
+            df.loc[mask, canonica] = df.loc[mask, col]
+            df.drop(columns=[col], inplace=True)
+        else:
+            df.rename(columns={col: canonica}, inplace=True)
+    return df
+
+
 def _ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Garantiza la presencia y el orden del esquema fijo."""
+    if df is None:
+        df = _empty_dataframe()
+    df = _normalize_dataframe_columns(df)
     df = df.copy()
     for col in COLUMNS:
         if col not in df.columns:
@@ -150,7 +199,7 @@ def _aplicar_reglas_pago(df: pd.DataFrame):
         actualizado = True
 
     for idx, row in df.iterrows():
-        plan = str(row.get("Tipo de plan", "")).strip()
+        plan = str(row.get("Plan contratado", "")).strip()
         estado_actual = str(row.get("Estado de pago", "")).strip() or "No pagado"
         fecha_pago = str(row.get("Fecha último pago", "")).strip()
 

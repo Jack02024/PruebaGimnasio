@@ -309,12 +309,15 @@ def mostrar_alta():
                     "DNI": dni.strip().upper(),
                     "Teléfono": telefono.strip().replace(" ", ""),
                     "Email": email.strip().lower(),
-                    "Tipo de plan": st.session_state.plan_disciplina,
                     "Disciplina": st.session_state.disciplina,
                     "Plan contratado": st.session_state.plan_disciplina,
                     "Precio": st.session_state.precio_plan,
                     "Fecha nacimiento": st.session_state.fecha_nacimiento,
                     "Fecha de alta": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "Banco": "",
+                    "Titular": "",
+                    "IBAN": "",
+                    "Localidad": "",
                     "Estado": "Activo",
                     "Estado de pago": "No pagado",
                     "Fecha último pago": ""
@@ -322,8 +325,57 @@ def mostrar_alta():
                 st.session_state.paso = 2
                 st.rerun()
 
-    # --- Paso 2: Confirmar datos ---
+    # --- Paso 2: Datos bancarios ---
     elif st.session_state.paso == 2:
+        if "nuevo_socio" not in st.session_state:
+            st.warning("Primero completa el formulario anterior.")
+            st.session_state.paso = 1
+            st.rerun()
+
+        st.info("Introduce los datos bancarios del socio.")
+        if st.button("⬅️ Volver al formulario anterior"):
+            st.session_state.paso = 1
+            st.rerun()
+
+        datos = st.session_state.nuevo_socio
+        with st.form("form_datos_bancarios"):
+            banco = st.text_input("Banco", value=datos.get("Banco", ""))
+            titular = st.text_input("Titular", value=datos.get("Titular", ""))
+            iban = st.text_input("IBAN", value=datos.get("IBAN", ""))
+            localidad = st.text_input("Localidad", value=datos.get("Localidad", ""))
+            continuar_banco = st.form_submit_button("Continuar ➡️")
+
+        if continuar_banco:
+            errores = []
+            if not banco.strip():
+                errores.append("El banco es obligatorio.")
+            if not titular.strip():
+                errores.append("El titular es obligatorio.")
+            iban_limpio = iban.replace(" ", "").upper()
+            if not iban_limpio:
+                errores.append("El IBAN es obligatorio.")
+            elif not re.match(r"^[A-Z]{2}[0-9]{2}[A-Z0-9]{10,30}$", iban_limpio):
+                errores.append("El IBAN no parece válido. Usa el formato estándar (Ej: ES00...).")
+            if not localidad.strip():
+                errores.append("La localidad es obligatoria.")
+
+            if errores:
+                for err in errores:
+                    st.error(err)
+            else:
+                st.session_state.nuevo_socio.update(
+                    {
+                        "Banco": banco.strip(),
+                        "Titular": titular.strip(),
+                        "IBAN": iban_limpio,
+                        "Localidad": localidad.strip(),
+                    }
+                )
+                st.session_state.paso = 3
+                st.rerun()
+
+    # --- Paso 3: Confirmar datos ---
+    elif st.session_state.paso == 3:
         st.info("📋 Revisa los datos antes de continuar:")
         nuevo = st.session_state.nuevo_socio
         st.write(f"**Nombre:** {nuevo['Nombre']}")
@@ -335,21 +387,25 @@ def mostrar_alta():
         st.write(
             f"**Plan contratado:** {nuevo['Plan contratado']} ({nuevo['Precio']})"
         )
+        st.write(f"**Banco:** {nuevo.get('Banco','')}")
+        st.write(f"**Titular:** {nuevo.get('Titular','')}")
+        st.write(f"**IBAN:** {nuevo.get('IBAN','')}")
+        st.write(f"**Localidad:** {nuevo.get('Localidad','')}")
 
         col1, col2 = st.columns(2)
         if col1.button("⬅️ Volver"):
-            st.session_state.paso = 1
+            st.session_state.paso = 2
             _reset_firma_state(reset_canvas=True)
             st.rerun()
         if col2.button("Confirmar y continuar ✅"):
-            st.session_state.paso = 3
+            st.session_state.paso = 4
             st.rerun()
 
-    # --- Paso 3: Documento RGPD + Aceptación ---
-    elif st.session_state.paso == 3:
+    # --- Paso 4: Documento RGPD + Aceptación ---
+    elif st.session_state.paso == 4:
         st.markdown("### 📄 Documento legal — Consentimiento RGPD")
         if st.button("⬅️ Volver al resumen"):
-            st.session_state.paso = 2
+            st.session_state.paso = 3
             _reset_firma_state(reset_canvas=True)
             st.rerun()
 
@@ -450,5 +506,6 @@ def mostrar_alta():
                 st.session_state.pop("tipo_cliente", None)
                 st.session_state.pop("fecha_temp", None)
                 _reset_firma_state(reset_canvas=True)
-                st.session_state.logged_in = False
+                st.session_state.show_modal = True
+                st.session_state.modal_timestamp = None
                 st.rerun()

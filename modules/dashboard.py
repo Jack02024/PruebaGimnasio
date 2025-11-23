@@ -16,11 +16,11 @@ def _configurar_figura():
 
 def grafico_tipo_plan(df):
     st.subheader("🥋 Distribución por tipo de plan")
-    if "Tipo de plan" not in df.columns or df["Tipo de plan"].dropna().empty:
+    if "Plan contratado" not in df.columns or df["Plan contratado"].dropna().empty:
         st.info("No hay datos de planes para mostrar el gráfico.")
         return
 
-    plan_counts = df["Tipo de plan"].value_counts()
+    plan_counts = df["Plan contratado"].value_counts()
     fig, ax = _configurar_figura()
     ax.pie(
         plan_counts.values,
@@ -52,7 +52,7 @@ def grafico_disciplinas(df):
 
 def grafico_planes_populares(df):
     st.subheader("🏆 Planes más contratados")
-    columna = "Plan contratado" if "Plan contratado" in df.columns else "Tipo de plan"
+    columna = "Plan contratado"
     if columna not in df.columns or df[columna].dropna().empty:
         st.info("No hay datos suficientes de planes contratados.")
         return

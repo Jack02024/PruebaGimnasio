@@ -185,7 +185,7 @@ def buscador_socios(
         if not acciones_socio:
             continue
 
-        plan_actual = socio.get("Plan contratado") or socio.get("Tipo de plan", "")
+        plan_actual = socio.get("Plan contratado", "")
         precio = socio.get("Precio", "")
 
         st.markdown(

@@ -108,7 +108,7 @@ def mostrar_editar():
         ">
             <strong>{socio.get('Nombre','')} {socio.get('Apellidos','')}</strong><br>
             DNI: {socio.get('DNI','')} · Tel: {socio.get('Teléfono','')} · Email: {socio.get('Email','')}<br>
-            Disciplina: {disciplina} · Plan: {socio.get('Plan contratado', socio.get('Tipo de plan',''))} ({socio.get('Precio','')})<br>
+            Disciplina: {disciplina} · Plan: {socio.get('Plan contratado','')} ({socio.get('Precio','')})<br>
             Estado: {estado} · Estado de pago: {socio.get('Estado de pago','')}<br>
             Fecha nacimiento: {fecha_guardada.isoformat()} {(f'(Edad: {edad} años)' if edad is not None else '')}
         </div>
@@ -120,7 +120,7 @@ def mostrar_editar():
     if not planes_disponibles:
         planes_disponibles = [(socio.get("Plan contratado", "Plan sin definir"), socio.get("Precio", ""))]
 
-    plan_actual_nombre = socio.get("Plan contratado") or socio.get("Tipo de plan") or planes_disponibles[0][0]
+    plan_actual_nombre = socio.get("Plan contratado") or planes_disponibles[0][0]
     try:
         plan_index = [p[0] for p in planes_disponibles].index(plan_actual_nombre)
     except ValueError:
@@ -179,7 +179,6 @@ def mostrar_editar():
             "Apellidos": apellidos.strip(),
             "Teléfono": telefono.strip(),
             "Email": email.strip().lower(),
-            "Tipo de plan": plan_nombre,
             "Plan contratado": plan_nombre,
             "Precio": plan_precio,
             "Fecha nacimiento": fecha_nacimiento_input.isoformat(),

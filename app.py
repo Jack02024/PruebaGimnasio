@@ -1,6 +1,7 @@
 import streamlit as st
 from pathlib import Path
 import os
+import time
 
 # --- Módulos internos ---
 from ui.style import aplicar_estilos
@@ -112,6 +113,76 @@ if sincronizados:
     st.toast(f"✅ {sincronizados} cambio(s) sincronizados correctamente.")
 if st.session_state.get("offline_flag") or hay_pendientes_offline():
     st.warning("⚠ La red está inestable. Cambios guardados localmente y pendientes de sincronizar.")
+
+# --- Modal tras alta ---
+if "show_modal" not in st.session_state:
+    st.session_state.show_modal = False
+if "modal_timestamp" not in st.session_state:
+    st.session_state.modal_timestamp = None
+
+if st.session_state.show_modal:
+    if st.session_state.modal_timestamp is None:
+        st.session_state.modal_timestamp = time.time()
+
+    st.markdown(
+        """
+        <style>
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.65);
+            z-index: 9998;
+            pointer-events: none;
+        }
+        .modal-container {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+        .modal-card {
+            background: #fdfdfd;
+            color: #111;
+            border-radius: 18px;
+            padding: 30px 40px;
+            text-align: center;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.25);
+            width: min(90%, 520px);
+            font-size: 1.05rem;
+            line-height: 1.4;
+        }
+        .modal-card h3 {
+            margin-bottom: 8px;
+            font-size: 1.4rem;
+        }
+        .modal-card p {
+            margin-bottom: 18px;
+        }
+        </style>
+        <div class="modal-overlay"></div>
+        <div class="modal-container">
+            <div class="modal-card">
+                <h3>✔️ Socio dado de alta correctamente</h3>
+                <p>Confirma para finalizar la sesión.</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    wait_seconds = 1.5
+    elapsed = time.time() - st.session_state.modal_timestamp
+    remaining = max(0, wait_seconds - elapsed)
+    if remaining > 0:
+        time.sleep(remaining)
+
+    st.session_state.show_modal = False
+    st.session_state.modal_timestamp = None
+    logout()
+    st.rerun()
+    st.stop()
 
 # --- Menú dinámico según rol ---
 if st.session_state.role == "admin":

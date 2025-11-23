@@ -19,7 +19,7 @@ def _mostrar_ficha_detalle(socio: dict):
             <strong>DNI:</strong> {socio.get('DNI','')}<br>
             <strong>Teléfono:</strong> {socio.get('Teléfono','')}<br>
             <strong>Email:</strong> {socio.get('Email','')}<br>
-            <strong>Tipo de plan:</strong> {socio.get('Tipo de plan','')}<br>
+            <strong>Plan contratado:</strong> {socio.get('Plan contratado','')}<br>
             <strong>Estado actual:</strong> {socio.get('Estado','')}<br>
             <strong>Estado de pago:</strong> {socio.get('Estado de pago','')}<br>
             <strong>Fecha último pago:</strong> {socio.get('Fecha último pago','') or '—'}
