@@ -4,3 +4,22 @@ firmas/
 socios.xlsx
 __pycache__/
 .DS_Store
+# ---- SECURITY: DO NOT TRACK CREDENTIALS ----
+oauth_credentials.json
+token.json
+autoriza_oauth.py
+
+# ---- IGNORE PDF ASSETS ----
+assets/*.pdf
+
+# ---- PYTHON CACHE ----
+*.pyc
+__pycache__/
+core/__pycache__/
+modules/__pycache__/
+components/__pycache__/
+ui/__pycache__/
+
+# ---- IGNORE LOCAL USER FILES ----
+usuarios.json
+

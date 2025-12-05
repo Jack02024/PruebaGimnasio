@@ -55,7 +55,10 @@ def mostrar_baja():
             st.info("📄 Ficha del socio seleccionado:")
             _mostrar_ficha_detalle(socio)
         elif evento["accion"] == "marcar_pagado":
-            fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            from core.data_manager import fecha_hoy_madrid
+            from datetime import datetime
+            import pytz
+            fecha_actual = datetime.now(tz=pytz.timezone("Europe/Madrid")).strftime("%d-%m-%Y %H:%M:%S")
             socios.loc[socios["DNI"] == socio["DNI"], "Estado de pago"] = "Pagado"
             socios.loc[socios["DNI"] == socio["DNI"], "Fecha último pago"] = fecha_actual
             guardar_datos(socios)

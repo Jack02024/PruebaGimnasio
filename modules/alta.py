@@ -1,21 +1,46 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date
+import pytz
 import time
-from core.data_manager import cargar_datos, guardar_datos, registrar_log
+from core.data_manager import cargar_datos, guardar_datos, registrar_log, upload_pdf_to_drive, ensure_person_folder
 from pathlib import Path
 import base64
 import re  # 🔹 Para validaciones con expresiones regulares
 from io import BytesIO
+import io
 from PIL import Image
-from streamlit_drawable_canvas import st_canvas
 from PyPDF2 import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas as reportlab_canvas
 from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import ImageReader
+from components.signature_pad import signature_pad
 
 BASE_PDF = Path("assets/Consentimiento Fines Promocionales_NICOVA.pdf")
-FIRMAS_DIR = Path("firmas")
-FIRMAS_DIR.mkdir(exist_ok=True)
+
+PDF_PROMOCIONALES = "assets/Consentimiento Fines Promocionales_NICOVA.pdf"
+PDF_WHATSAPP = "assets/Consentimiento WhatsApp.pdf"
+PDF_MENOR14 = "assets/Consentimiento menor de edad, menor de 14 años - Firma madre, padre o tutor legal.pdf"
+PDF_14_18 = "assets/Consentimiento menor de edad, mayor de 14 años - Firma padre, madre, tutor legal.pdf"
+PDF_PUBLICIDAD = "assets/Documento para el tratamiento publicitario - Firmar.pdf"
+
+DOCS_ADULTO = [
+    {"path": PDF_WHATSAPP, "col": "URL Doc WhatsApp", "page": 1, "x": 350, "y": 60},
+    {"path": PDF_PUBLICIDAD, "col": "URL Doc Publicidad", "page": 1, "x": 350, "y": 60},
+    {"path": PDF_PROMOCIONALES, "col": "URL PDF Consentimiento", "page": 2, "x": 350, "y": 120},
+]
+
+DOCS_14_18 = [
+    {"path": PDF_WHATSAPP, "col": "URL Doc WhatsApp", "page": 1, "x": 350, "y": 60},
+    {"path": PDF_PUBLICIDAD, "col": "URL Doc Publicidad", "page": 1, "x": 350, "y": 60},
+    {"path": PDF_14_18, "col": "URL Doc 14-18", "page": 2, "x": 350, "y": 120},
+]
+
+DOCS_MENOR14 = [
+    {"path": PDF_WHATSAPP, "col": "URL Doc WhatsApp", "page": 1, "x": 350, "y": 60},
+    {"path": PDF_PUBLICIDAD, "col": "URL Doc Publicidad", "page": 1, "x": 350, "y": 60},
+    {"path": PDF_MENOR14, "col": "URL Doc Menor14", "page": 2, "x": 350, "y": 120},
+]
 
 PLANES_INFANTIL = [
     ("1 día/semana", "25€"),
@@ -77,33 +102,40 @@ def _reset_firma_state(reset_canvas: bool = False):
     st.session_state["firma_realizada"] = False
     st.session_state["firma_imagen"] = None
     if reset_canvas:
-        st.session_state["canvas_firma_key"] = st.session_state.get("canvas_firma_key", 0) + 1
+        st.session_state["signature_pad_key"] = st.session_state.get("signature_pad_key", 0) + 1
 
 
-def _guardar_firma_imagen(image_array, destino: Path) -> None:
-    imagen = Image.fromarray(image_array.astype("uint8"))
-    imagen.save(destino, format="PNG")
-
-
-def _generar_pdf_firmado(pdf_base: Path, firma_path: Path, destino: Path, nombre: str, apellidos: str, dni: str, timestamp: str) -> None:
+def _generar_pdf_firmado(
+    pdf_base: Path,
+    firma_buffer: BytesIO,
+    nombre: str,
+    apellidos: str,
+    dni: str,
+    timestamp: str,
+    page: int | None = None,
+    x: int = 350,
+    y: int = 120,
+) -> bytes:
     reader = PdfReader(str(pdf_base))
     writer = PdfWriter()
     total_paginas = len(reader.pages)
 
+    target_page_index = (page - 1) if page else (total_paginas - 1)
+
     for index, page in enumerate(reader.pages):
-        if index == total_paginas - 1:
+        if index == target_page_index:
             packet = BytesIO()
             can = reportlab_canvas.Canvas(packet, pagesize=A4)
 
-            firma_img = Image.open(firma_path)
+            firma_buffer.seek(0)
+            firma_img = Image.open(firma_buffer)
             firma_ancho = 180
             ratio = firma_img.height / firma_img.width if firma_img.width else 1
             firma_alto = firma_ancho * ratio
 
-            x = 350
-            y = 120
-
-            can.drawImage(str(firma_path), x, y, width=firma_ancho, height=firma_alto, mask="auto")
+            firma_buffer.seek(0)
+            image_reader = ImageReader(firma_buffer)
+            can.drawImage(image_reader, x, y, width=firma_ancho, height=firma_alto, mask="auto")
             can.setFont("Helvetica", 10)
             lineas = [
                 f"Firmado electrónicamente por {nombre} {apellidos}",
@@ -122,8 +154,10 @@ def _generar_pdf_firmado(pdf_base: Path, firma_path: Path, destino: Path, nombre
 
         writer.add_page(page)
 
-    with open(destino, "wb") as salida:
-        writer.write(salida)
+    salida = BytesIO()
+    writer.write(salida)
+    salida.seek(0)
+    return salida.getvalue()
 
 def mostrar_alta():
     st.subheader("📄 Ficha Inscripción - Escuela AG BOXEO")
@@ -182,6 +216,14 @@ def mostrar_alta():
                 if st.session_state.tipo_cliente == "infantil":
                     st.session_state.disciplina = "Infantil"
                 st.session_state.pop("fecha_temp", None)
+                # Preparar cola de documentos (fase 1, no se usa aún en el flujo)
+                if edad >= 18:
+                    st.session_state.doc_queue = DOCS_ADULTO
+                elif edad > 14:
+                    st.session_state.doc_queue = DOCS_14_18
+                else:
+                    st.session_state.doc_queue = DOCS_MENOR14
+                st.session_state.doc_index = 0
                 st.rerun()
         st.stop()
 
@@ -248,8 +290,8 @@ def mostrar_alta():
 
     if "firma_realizada" not in st.session_state:
         _reset_firma_state()
-    if "canvas_firma_key" not in st.session_state:
-        st.session_state.canvas_firma_key = 0
+    if "signature_pad_key" not in st.session_state:
+        st.session_state.signature_pad_key = 0
 
     # --- Paso 1: Formulario inicial ---
     if "paso" not in st.session_state:
@@ -276,14 +318,21 @@ def mostrar_alta():
             st.rerun()
 
         with st.form("form_datos"):
-            nombre = st.text_input("Nombre")
-            apellidos = st.text_input("Apellidos")
-            dni = st.text_input("DNI")
-            telefono = st.text_input("Teléfono")
-            email = st.text_input("Email")
+            nombre = st.text_input("Nombre", value=st.session_state.get("form_nombre", ""))
+            apellidos = st.text_input("Apellidos", value=st.session_state.get("form_apellidos", ""))
+            dni = st.text_input("DNI", value=st.session_state.get("form_dni", ""))
+            telefono = st.text_input("Teléfono", value=st.session_state.get("form_telefono", ""))
+            email = st.text_input("Email", value=st.session_state.get("form_email", ""))
             continuar = st.form_submit_button("Continuar ➡️")
 
         if continuar:
+            # Persistir valores del formulario en sesión
+            st.session_state.form_nombre = nombre
+            st.session_state.form_apellidos = apellidos
+            st.session_state.form_dni = dni
+            st.session_state.form_telefono = telefono
+            st.session_state.form_email = email
+
             # --- 🔍 Validaciones ---
             errores = []
 
@@ -313,11 +362,16 @@ def mostrar_alta():
                     "Plan contratado": st.session_state.plan_disciplina,
                     "Precio": st.session_state.precio_plan,
                     "Fecha nacimiento": st.session_state.fecha_nacimiento,
-                    "Fecha de alta": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "Fecha de alta": datetime.now(tz=pytz.timezone("Europe/Madrid")).strftime("%d-%m-%Y %H:%M:%S"),
                     "Banco": "",
                     "Titular": "",
                     "IBAN": "",
                     "Localidad": "",
+                    "URL PDF Consentimiento": "",
+                    "URL Doc WhatsApp": "",
+                    "URL Doc Publicidad": "",
+                    "URL Doc Menor14": "",
+                    "URL Doc 14-18": "",
                     "Estado": "Activo",
                     "Estado de pago": "No pagado",
                     "Fecha último pago": ""
@@ -339,25 +393,37 @@ def mostrar_alta():
 
         datos = st.session_state.nuevo_socio
         with st.form("form_datos_bancarios"):
-            banco = st.text_input("Banco", value=datos.get("Banco", ""))
-            titular = st.text_input("Titular", value=datos.get("Titular", ""))
-            iban = st.text_input("IBAN", value=datos.get("IBAN", ""))
-            localidad = st.text_input("Localidad", value=datos.get("Localidad", ""))
+            banco = st.text_input("Banco", value=st.session_state.get("form_banco", datos.get("Banco", "")))
+            titular = st.text_input("Titular", value=st.session_state.get("form_titular", datos.get("Titular", "")))
+            iban_input = st.text_input("IBAN", value=st.session_state.get("form_iban", datos.get("IBAN", "ES")), max_chars=24)
+            localidad_input = st.text_input("Localidad", value=st.session_state.get("form_localidad", datos.get("Localidad", "")))
             continuar_banco = st.form_submit_button("Continuar ➡️")
 
         if continuar_banco:
+            st.session_state.form_banco = banco
+            st.session_state.form_titular = titular
+            st.session_state.form_iban = iban_input
+            st.session_state.form_localidad = localidad_input
             errores = []
             if not banco.strip():
                 errores.append("El banco es obligatorio.")
             if not titular.strip():
                 errores.append("El titular es obligatorio.")
-            iban_limpio = iban.replace(" ", "").upper()
+            # Normalizar localidad
+            localidad_normalizada = localidad_input.strip().capitalize() if localidad_input else ""
+            if not localidad_normalizada:
+                errores.append("La localidad es obligatoria.")
+            # Validar IBAN fijo ES + 22 dígitos
+            iban_limpio = (iban_input or "").replace(" ", "").upper()
             if not iban_limpio:
                 errores.append("El IBAN es obligatorio.")
-            elif not re.match(r"^[A-Z]{2}[0-9]{2}[A-Z0-9]{10,30}$", iban_limpio):
-                errores.append("El IBAN no parece válido. Usa el formato estándar (Ej: ES00...).")
-            if not localidad.strip():
-                errores.append("La localidad es obligatoria.")
+            else:
+                if not iban_limpio.startswith("ES"):
+                    iban_limpio = "ES" + iban_limpio.replace("ES", "")
+                if len(iban_limpio) != 24:
+                    errores.append("El IBAN debe contener exactamente 24 caracteres (ES + 22 dígitos).")
+                elif not iban_limpio[2:].isdigit():
+                    errores.append("Los 22 caracteres después de 'ES' deben ser numéricos.")
 
             if errores:
                 for err in errores:
@@ -368,7 +434,7 @@ def mostrar_alta():
                         "Banco": banco.strip(),
                         "Titular": titular.strip(),
                         "IBAN": iban_limpio,
-                        "Localidad": localidad.strip(),
+                        "Localidad": localidad_normalizada,
                     }
                 )
                 st.session_state.paso = 3
@@ -392,6 +458,35 @@ def mostrar_alta():
         st.write(f"**IBAN:** {nuevo.get('IBAN','')}")
         st.write(f"**Localidad:** {nuevo.get('Localidad','')}")
 
+        st.info(
+            "Para una mejor gestión, rogamos que, si se quiere dar de baja un socio "
+            "se comunique del día 01 al día 25 del mes anterior. "
+            "Si no se comunica en ese plazo, se cobrará el mes correspondiente."
+        )
+        with st.expander("Información legal sobre el tratamiento de datos"):
+            st.caption(
+                "La identidad del responsable que trata sus datos personales es: NICOVA SPORT BOXING SL, "
+                "con CIF/NIF B09817800, Dirección C/ Caleruega, 51, Población MADRID, Código Postal 28033, "
+                "Provincia MADRID y Correo electrónico agboxeo@gmail.com. "
+                "En esta organización tratamos la información que nos facilitan las personas interesadas con los fines "
+                "de comprobar que se están llevando a cabo todas las medidas técnicas necesarias para la correcta gestión "
+                "de los datos personales con el software aplicado; enviar información comercial y/o publicitaria mediante "
+                "correo electrónico; gestionar cualquier problema de índole jurídica que afecte a la empresa; gestionar, "
+                "mantener y reparar los sistemas de almacenamiento informático; llevar a cabo la gestión fiscal y contable "
+                "propia; cumplir el principio de limitación del plazo de conservación de los datos personales; cumplir los "
+                "requisitos del RGPD y LOPD; realizar la gestión administrativa de clientes particulares y llevar a cabo la "
+                "venta o prestación del servicio contratado. La legitimación para el tratamiento de sus datos es una obligación "
+                "legal del responsable, el contrato suscrito por usted, el interés legítimo del responsable y/o su previo "
+                "consentimiento. Sus datos personales se incorporarán a los siguientes ficheros, titularidad de la organización: "
+                "Gestión contable propia; Gestión fiscal propia; Mantenimiento informático; Asuntos jurídicos propios; Correos "
+                "electrónicos; Seguridades en el software y hardware; Destrucción de documentos; Protección de Datos Personales; "
+                "Clientes. Los datos personales que tratamos en nuestra organización proceden del propio interesado. Usted puede "
+                "ejercer los derechos de acceso, rectificación, supresión, portabilidad, limitación, oposición al tratamiento, "
+                "y oposición a la toma de decisiones automatizadas, así como interponer reclamaciones ante la autoridad de control. "
+                "En su caso, puede retirar el consentimiento otorgado. Puede consultar toda la información detallada en la web o "
+                "enviando un e-mail a la dirección arriba indicada."
+            )
+
         col1, col2 = st.columns(2)
         if col1.button("⬅️ Volver"):
             st.session_state.paso = 2
@@ -399,113 +494,206 @@ def mostrar_alta():
             st.rerun()
         if col2.button("Confirmar y continuar ✅"):
             st.session_state.paso = 4
+            st.session_state.doc_index = 0
             st.rerun()
 
-    # --- Paso 4: Documento RGPD + Aceptación ---
+    # --- Paso 4: Firma de documentos (stepper múltiple con una sola firma final) ---
     elif st.session_state.paso == 4:
-        st.markdown("### 📄 Documento legal — Consentimiento RGPD")
-        if st.button("⬅️ Volver al resumen"):
-            st.session_state.paso = 3
+        st.markdown("### 📄 Firma de documentos")
+        doc_queue = st.session_state.get("doc_queue") or [
+            {"path": str(BASE_PDF), "col": "URL PDF Consentimiento", "page": None, "x": 350, "y": 120}
+        ]
+        doc_index = st.session_state.get("doc_index", 0)
+        if "doc_respuestas" not in st.session_state:
+            st.session_state.doc_respuestas = {}
+
+        # Navegación: volver al resumen solo en el primer documento; atrás en los siguientes
+        if doc_index == 0:
+            if st.button("⬅️ Volver al resumen"):
+                st.session_state.paso = 3
+                st.session_state.doc_index = 0
+                _reset_firma_state(reset_canvas=True)
+                st.rerun()
+        else:
+            if st.button("⬅️ Atrás"):
+                st.session_state.doc_index = max(0, doc_index - 1)
+                _reset_firma_state(reset_canvas=True)
+                st.rerun()
+
+        if doc_index >= len(doc_queue):
+            # Ya no hay documentos pendientes; continuar con guardado final
+            nuevo = st.session_state.nuevo_socio
+
+            socios = pd.concat([socios, pd.DataFrame([nuevo])], ignore_index=True)
+            guardar_datos(socios)
+            detalle = (
+                f"Disciplina: {nuevo['Disciplina']}, Plan: {nuevo['Plan contratado']} "
+                f"({nuevo['Precio']}), Fecha nacimiento: {nuevo['Fecha nacimiento']}, "
+                f"Email: {nuevo['Email']}, Teléfono: {nuevo['Teléfono']}"
+            )
+            registrar_log(
+                usuario=st.session_state.get("username", "desconocido"),
+                accion="alta",
+                dni=nuevo["DNI"],
+                detalle=detalle,
+            )
+            st.success("✅ Alta completada y documentos firmados correctamente.")
+            st.toast("Nuevo socio registrado correctamente.")
+
+            # --- Limpiar flujo ---
+            st.session_state.paso = 1
+            for key in [
+                "form_nombre",
+                "form_apellidos",
+                "form_dni",
+                "form_telefono",
+                "form_email",
+                "form_banco",
+                "form_titular",
+                "form_iban",
+                "form_localidad",
+                "nuevo_socio",
+                "disciplina",
+                "plan_disciplina",
+                "precio_plan",
+                "fecha_nacimiento",
+                "edad",
+                "tipo_cliente",
+                "fecha_temp",
+                "doc_queue",
+                "doc_index",
+                "doc_respuestas",
+            ]:
+                st.session_state.pop(key, None)
             _reset_firma_state(reset_canvas=True)
+            st.session_state.show_modal = True
+            st.session_state.modal_timestamp = None
             st.rerun()
 
-        if BASE_PDF.exists():
-            with open(BASE_PDF, "rb") as f:
+        doc = doc_queue[doc_index]
+        total_docs = len(doc_queue)
+        st.markdown(f"**Documento {doc_index + 1} / {total_docs}**")
+        st.info("Revisa el documento y selecciona tu decisión.")
+
+        pdf_path = Path(doc["path"])
+        if pdf_path.exists():
+            with open(pdf_path, "rb") as f:
                 base64_pdf = base64.b64encode(f.read()).decode("utf-8")
             pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600px" type="application/pdf"></iframe>'
             st.markdown(pdf_display, unsafe_allow_html=True)
         else:
-            st.error("❌ No se encontró el documento RGPD en la carpeta assets.")
+            st.error(f"❌ No se encontró el documento en {pdf_path}")
 
-        st.markdown("### ✍️ Firma digital")
-        st.write("✍️ Firma del socio (usa el ratón o el dedo en pantalla táctil)")
+        # Selección con checkboxes mutuamente excluyentes
+        # Leer siempre directamente de los checkboxes (estado actual)
+        col_acepto, col_no_acepto = st.columns(2)
+        acepto = col_acepto.checkbox("Acepto", key=f"acepto_{doc_index}")
+        no_acepto = col_no_acepto.checkbox("No acepto", key=f"no_acepto_{doc_index}")
 
-        canvas_result = st_canvas(
-            fill_color="#000000",
-            stroke_width=2,
-            stroke_color="#000000",
-            background_color="#FFFFFF",
-            height=180,
-            width=600,
-            drawing_mode="freedraw",
-            key=f"canvas_firma_{st.session_state.canvas_firma_key}",
-        )
+        es_ultimo = doc_index == (total_docs - 1)
 
-        if canvas_result.image_data is not None:
-            hay_trazo = bool(
-                canvas_result.json_data
-                and canvas_result.json_data.get("objects")
-                and len(canvas_result.json_data.get("objects")) > 0
-            )
-            if hay_trazo:
-                st.session_state.firma_imagen = canvas_result.image_data
-                st.session_state.firma_realizada = True
+        if es_ultimo:
+            st.markdown("### ✍️ Firma digital")
+            st.write("✍️ Firma del socio (usa el ratón o el dedo en pantalla táctil)")
+
+            firma_data = signature_pad(key=f"firma_component_{st.session_state.signature_pad_key}", default={"image": None})
+            if firma_data and isinstance(firma_data, dict) and firma_data.get("image"):
+                try:
+                    header, b64data = firma_data["image"].split(",", 1)
+                    img_bytes = base64.b64decode(b64data)
+                    firma_image = Image.open(BytesIO(img_bytes)).convert("RGB")
+                    st.session_state.firma_data = firma_data["image"]
+                    st.session_state.firma_imagen = img_bytes
+                    st.session_state.firma_realizada = True
+                except Exception:
+                    if "firma_data" not in st.session_state:
+                        st.session_state.firma_data = None
+                    st.session_state.firma_realizada = False
+                    st.warning("⚠️ No se pudo procesar la firma. Intenta de nuevo.")
             else:
+                if "firma_data" not in st.session_state:
+                    st.session_state.firma_data = None
                 st.session_state.firma_realizada = False
+                st.info("Dibuja tu firma. Se guardará automáticamente al levantar el lápiz o el dedo.")
 
-        if st.button("🧽 Limpiar firma"):
-            _reset_firma_state(reset_canvas=True)
-            st.rerun()
+            if st.button("🧽 Limpiar firma"):
+                _reset_firma_state(reset_canvas=True)
+                st.rerun()
 
-        aceptar = st.checkbox("He leído y acepto el documento legal de consentimiento RGPD")
+            aceptar_rgpd = st.checkbox("He leído y acepto el tratamiento de mis datos personales (RGPD)")
 
-        if st.button("Guardar alta ✅"):
-            if not aceptar:
-                st.warning("⚠️ Debes aceptar el documento para continuar.")
-            elif not st.session_state.get("firma_realizada"):
-                st.warning("⚠️ Debes firmar el documento para continuar.")
-            else:
-                nuevo = st.session_state.nuevo_socio
-                firma_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                firma_png = FIRMAS_DIR / f"firma_{nuevo['DNI']}.png"
-                pdf_firmado = FIRMAS_DIR / f"Consentimiento_Firmado_{nuevo['DNI']}.pdf"
+            if st.button("Finalizar firma"):
+                # Validación XOR: exactamente uno marcado
+                if (acepto and no_acepto) or (not acepto and not no_acepto):
+                    st.error("Debes seleccionar solo una opción: Acepto o No acepto.")
+                    return
+                estado_actual = "ACEPTADO" if acepto else "RECHAZADO"
+                st.session_state.doc_respuestas[doc["col"]] = estado_actual
+                st.session_state.nuevo_socio[doc["col"]] = estado_actual
+
+                # Verificar que todos los documentos tienen respuesta
+                if any(d["col"] not in st.session_state.doc_respuestas for d in doc_queue):
+                    st.warning("Faltan decisiones en documentos anteriores.")
+                    return
+
+                # Si algún doc está aceptado, debe haber firma y checkbox RGPD marcado
+                algun_aceptado = any(
+                    st.session_state.doc_respuestas.get(d["col"]) == "ACEPTADO" for d in doc_queue
+                )
+                if algun_aceptado:
+                    if not aceptar_rgpd:
+                        st.warning("⚠️ Debes aceptar el tratamiento de datos (RGPD) para continuar.")
+                        return
+                    if not st.session_state.get("firma_data"):
+                        st.error("⚠️ Debes firmar el documento para continuar.")
+                        return
 
                 progress = st.progress(0)
-                progress.progress(15)
+                firma_buffer = None
+                if algun_aceptado:
+                    firma_buffer = io.BytesIO(base64.b64decode(st.session_state["firma_data"].split(",", 1)[1]))
 
-                _guardar_firma_imagen(st.session_state["firma_imagen"], firma_png)
-                progress.progress(45)
+                folder_id = ensure_person_folder(
+                    st.session_state.nuevo_socio["Nombre"],
+                    st.session_state.nuevo_socio["Apellidos"],
+                    st.session_state.nuevo_socio["DNI"],
+                )
 
-                _generar_pdf_firmado(
-                    BASE_PDF,
-                    firma_png,
-                    pdf_firmado,
-                    nuevo["Nombre"],
-                    nuevo["Apellidos"],
-                    nuevo["DNI"],
-                    firma_timestamp,
-                )
-                progress.progress(85)
+                for idx_doc, d in enumerate(doc_queue):
+                    estado_doc = st.session_state.doc_respuestas.get(d["col"])
+                    if estado_doc != "ACEPTADO":
+                        st.session_state.nuevo_socio[d["col"]] = ""
+                        continue
+                    if firma_buffer is None:
+                        continue
+                    progress.progress(int((idx_doc / max(1, len(doc_queue))) * 100))
+                    pdf_path_iter = Path(d["path"])
+                    pdf_bytes = _generar_pdf_firmado(
+                        pdf_path_iter,
+                        firma_buffer,
+                        st.session_state.nuevo_socio["Nombre"],
+                        st.session_state.nuevo_socio["Apellidos"],
+                        st.session_state.nuevo_socio["DNI"],
+                        datetime.now(tz=pytz.timezone("Europe/Madrid")).strftime("%d-%m-%Y %H:%M:%S"),
+                        page=d.get("page"),
+                        x=d.get("x", 350),
+                        y=d.get("y", 120),
+                    )
+                    pdf_filename = f"{pdf_path_iter.stem}_{st.session_state.nuevo_socio['DNI']}.pdf"
+                    pdf_url = upload_pdf_to_drive(pdf_bytes, pdf_filename, folder_id=folder_id)
+                    st.session_state.nuevo_socio[d["col"]] = pdf_url or ""
 
-                socios = pd.concat([socios, pd.DataFrame([nuevo])], ignore_index=True)
-                guardar_datos(socios)
-                detalle = (
-                    f"Disciplina: {nuevo['Disciplina']}, Plan: {nuevo['Plan contratado']} "
-                    f"({nuevo['Precio']}), Fecha nacimiento: {nuevo['Fecha nacimiento']}, "
-                    f"Email: {nuevo['Email']}, Teléfono: {nuevo['Teléfono']}"
-                )
-                registrar_log(
-                    usuario=st.session_state.get("username", "desconocido"),
-                    accion="alta",
-                    dni=nuevo["DNI"],
-                    detalle=detalle,
-                )
                 progress.progress(100)
-
-                st.success("✅ Alta completada y documento firmado correctamente.")
-                st.toast("Nuevo socio registrado correctamente.")
-
-                # --- Limpiar flujo ---
-                st.session_state.paso = 1
-                st.session_state.pop("nuevo_socio", None)
-                st.session_state.pop("disciplina", None)
-                st.session_state.pop("plan_disciplina", None)
-                st.session_state.pop("precio_plan", None)
-                st.session_state.pop("fecha_nacimiento", None)
-                st.session_state.pop("edad", None)
-                st.session_state.pop("tipo_cliente", None)
-                st.session_state.pop("fecha_temp", None)
-                _reset_firma_state(reset_canvas=True)
-                st.session_state.show_modal = True
-                st.session_state.modal_timestamp = None
+                st.session_state.doc_index = len(doc_queue)
+                st.rerun()
+        else:
+            if st.button("Continuar al siguiente documento"):
+                # Validación XOR: exactamente uno marcado
+                if (acepto and no_acepto) or (not acepto and not no_acepto):
+                    st.error("Debes seleccionar solo una opción: Acepto o No acepto.")
+                    return
+                estado_actual = "ACEPTADO" if acepto else "RECHAZADO"
+                st.session_state.doc_respuestas[doc["col"]] = estado_actual
+                st.session_state.nuevo_socio[doc["col"]] = estado_actual
+                st.session_state.doc_index = doc_index + 1
                 st.rerun()

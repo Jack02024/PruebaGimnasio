@@ -4,6 +4,7 @@ matplotlib>=3.8
 gspread>=5.7
 google-auth>=2.23
 google-auth-oauthlib>=1.0
+google-auth-httplib2>=0.1
 google-api-python-client>=2.100
 oauth2client>=4.1
 PyPDF2>=3.0

@@ -1,0 +1,156 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Signature Pad</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 10px;
+      background: transparent;
+      font-family: Arial, sans-serif;
+      color: #111;
+    }
+    #wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    #canvas {
+      border: 2px dashed #aaa;
+      border-radius: 10px;
+      touch-action: none;
+      background: #fff;
+    }
+    #actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    button {
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid #999;
+      cursor: pointer;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div id="wrapper">
+    <canvas id="canvas" width="600" height="200"></canvas>
+    <div id="actions">
+      <button id="clearBtn" type="button">Limpiar</button>
+    </div>
+  </div>
+
+  <script>
+    // --- API mínima siguiendo el protocolo oficial de Streamlit Components ---
+    const params = new URLSearchParams(window.location.search);
+    const componentId = params.get("componentId");
+
+    function postToStreamlit(payload) {
+      window.parent.postMessage(payload, "*");
+    }
+
+    function setComponentReady() {
+      postToStreamlit({
+        isStreamlitMessage: true,
+        type: "streamlit:componentReady",
+        componentId,
+        apiVersion: 1,
+      });
+    }
+
+    function setFrameHeight(height) {
+      postToStreamlit({
+        isStreamlitMessage: true,
+        type: "streamlit:setFrameHeight",
+        height,
+      });
+    }
+
+    function sendImage() {
+      const dataUrl = canvas.toDataURL("image/png");
+      postToStreamlit({
+        isStreamlitMessage: true,
+        type: "streamlit:setComponentValue",
+        value: { image: dataUrl },
+        componentId,
+      });
+    }
+
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#000';
+
+    let drawing = false;
+
+    function getPos(e) {
+      if (!canvas) return { x: 0, y: 0 };
+      const rect = canvas.getBoundingClientRect();
+      if (!rect) return { x: 0, y: 0 };
+
+      let clientX, clientY;
+      if (e.touches && e.touches.length > 0) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+      } else {
+        clientX = e.clientX;
+        clientY = e.clientY;
+      }
+
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+
+      return {
+        x: (clientX - rect.left) * scaleX,
+        y: (clientY - rect.top) * scaleY,
+      };
+    }
+
+    function startDraw(e) {
+      e.preventDefault();
+      drawing = true;
+      const pos = getPos(e);
+      ctx.beginPath();
+      ctx.moveTo(pos.x, pos.y);
+    }
+
+    function draw(e) {
+      if (!drawing) return;
+      e.preventDefault();
+      const pos = getPos(e);
+      ctx.lineTo(pos.x, pos.y);
+      ctx.stroke();
+    }
+
+    function endDraw(e) {
+      if (!drawing) return;
+      e.preventDefault();
+      drawing = false;
+      sendImage(); // Enviar SIEMPRE la imagen completa al finalizar cada trazo
+    }
+
+    canvas.addEventListener('mousedown', startDraw);
+    canvas.addEventListener('mousemove', draw);
+    canvas.addEventListener('mouseup', endDraw);
+    canvas.addEventListener('mouseleave', endDraw);
+
+    canvas.addEventListener('touchstart', startDraw, { passive: false });
+    canvas.addEventListener('touchmove', draw, { passive: false });
+    canvas.addEventListener('touchend', endDraw, { passive: false });
+
+    document.getElementById('clearBtn').addEventListener('click', () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      sendImage();
+    });
+
+    // Handshake inicial
+    setComponentReady();
+    setFrameHeight(320);
+  </script>
+</body>
+</html>
